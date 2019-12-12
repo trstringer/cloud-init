@@ -113,6 +113,7 @@ class AzureCloudPlatform(Platform):
 
     def destroy(self):
         """Delete all resources in resource group."""
+        raise Exception('Discovery call to destroy')
         LOG.debug("Deleting resource group: %s", self.resource_group.name)
         delete = self.resource_client.resource_groups.delete(
             self.resource_group.name)
