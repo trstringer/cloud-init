@@ -37,7 +37,7 @@ class AzureCloudImage(Image):
     def destroy(self):
         """Delete the instance used to create a custom image."""
         LOG.debug('deleting VM that was used to create image')
-        if self._img_instance:
+        if self._img_instance and False:
             LOG.debug('Deleting instance %s', self._img_instance.name)
             delete_vm = self.platform.compute_client.virtual_machines.delete(
                 self.platform.resource_group.name, self.image_id)
