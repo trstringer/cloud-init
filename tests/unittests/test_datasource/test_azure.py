@@ -308,7 +308,7 @@ class TestGetMetadataFromIMDS(HttprettyTestCase):
 
     def setUp(self):
         super(TestGetMetadataFromIMDS, self).setUp()
-        self.network_md_url = dsaz.IMDS_URL + "instance?api-version=2019-06-01"
+        self.network_md_url = dsaz.IMDS_URL + "instance?api-version=2020-07-15"
 
     @mock.patch(MOCKPATH + 'readurl')
     @mock.patch(MOCKPATH + 'EphemeralDHCPv4')

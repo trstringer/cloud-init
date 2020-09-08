@@ -392,6 +392,8 @@ class DataSourceAzure(sources.DataSource):
         """Return the subplatform metadata source details."""
         if self.seed.startswith('/dev'):
             subplatform_type = 'config-disk'
+        elif self.seed.lower() == 'imds':
+            subplatform_type = 'imds'
         else:
             subplatform_type = 'seed-dir'
         return '%s (%s)' % (subplatform_type, self.seed)
@@ -419,6 +421,7 @@ class DataSourceAzure(sources.DataSource):
 
         found = None
         reprovision = False
+        ovf_is_accessible = True
         for cdev in candidates:
             try:
                 if cdev == "IMDS":
@@ -445,7 +448,17 @@ class DataSourceAzure(sources.DataSource):
                 msg = '%s was not mountable' % cdev
                 report_diagnostic_event(msg)
                 LOG.warning(msg)
-                continue
+                cdev = 'IMDS'
+                ovf_is_accessible = False
+                empty_md = {'local-hostname': ''}
+                empty_cfg = dict(
+                    system_info=dict(
+                        default_user=dict(
+                            name=''
+                        )
+                    )
+                )
+                ret = (empty_md, '', empty_cfg, {})
 
             perform_reprovision = reprovision or self._should_reprovision(ret)
             if perform_reprovision:
@@ -457,6 +470,10 @@ class DataSourceAzure(sources.DataSource):
                 ret = self._reprovision()
             imds_md = get_metadata_from_imds(
                 self.fallback_interface, retries=10)
+            if not imds_md and not ovf_is_accessible:
+                msg = 'No OVF or IMDS available'
+                report_diagnostic_event(msg)
+                raise sources.InvalidMetaDataException(msg)
             (md, userdata_raw, cfg, files) = ret
             self.seed = cdev
             crawled_data.update({
@@ -465,6 +482,14 @@ class DataSourceAzure(sources.DataSource):
                 'metadata': util.mergemanydict(
                     [md, {'imds': imds_md}]),
                 'userdata_raw': userdata_raw})
+            imds_username = _username_from_imds(imds_md)
+            imds_hostname = _hostname_from_imds(imds_md)
+            if imds_username:
+                LOG.debug('Username retrieved from IMDS')
+                cfg['system_info']['default_user']['name'] = imds_username
+            if imds_hostname:
+                LOG.debug('Hostname retrieved from IMDS: %s', imds_hostname)
+                crawled_data['metadata']['local-hostname'] = imds_hostname
             found = cdev
 
             LOG.debug("found datasource in %s", cdev)
@@ -875,6 +900,18 @@ class DataSourceAzure(sources.DataSource):
     def region(self):
         return self.metadata.get('imds', {}).get('compute', {}).get('location')
 
+
+def _username_from_imds(imds_data):
+    try:
+        return imds_data['compute']['osProfile']['adminUsername']
+    except KeyError:
+        return None
+
+def _hostname_from_imds(imds_data):
+    try:
+        return imds_data['compute']['osProfile']['computerName']
+    except KeyError:
+        return None
 
 def _partitions_on_device(devpath, maxnum=16):
     # return a list of tuples (ptnum, path) for each part on devpath
@@ -1492,7 +1529,7 @@ def get_metadata_from_imds(fallback_nic, retries):
 @azure_ds_telemetry_reporter
 def _get_metadata_from_imds(retries):
 
-    url = IMDS_URL + "instance?api-version=2019-06-01"
+    url = IMDS_URL + "instance?api-version=2020-07-15"
     headers = {"Metadata": "true"}
     try:
         response = readurl(
