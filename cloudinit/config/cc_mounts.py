@@ -237,7 +237,7 @@ def suggested_swapsize(memsize=None, maxsize=None, fsys=None):
     return size
 
 
-def create_swapfile(fname: str, size: str) -> None:
+def create_swapfile(fname: str, size: str, force_dd: bool = False) -> None:
     """Size is in MiB."""
 
     errmsg = "Failed to create swapfile '%s' of size %sMB via %s: %s"
@@ -264,7 +264,7 @@ def create_swapfile(fname: str, size: str) -> None:
     fstype = util.get_mount_info(swap_dir)[1]
 
     if (fstype == "xfs" and
-            util.kernel_version() < (4, 18)) or fstype in ["btrfs", "ext4"]:
+            util.kernel_version() < (4, 18)) or fstype == "btrfs" or force_dd:
         create_swap(fname, size, "dd")
     else:
         try:
@@ -283,7 +283,7 @@ def create_swapfile(fname: str, size: str) -> None:
         raise
 
 
-def setup_swapfile(fname, size=None, maxsize=None):
+def setup_swapfile(fname, size=None, maxsize=None, force_dd=False):
     """
     fname: full path string of filename to setup
     size: the size to create. set to "auto" for recommended
@@ -307,12 +307,12 @@ def setup_swapfile(fname, size=None, maxsize=None):
         return
 
     util.log_time(LOG.debug, msg="Setting up swap file", func=create_swapfile,
-                  args=[fname, mibsize])
+                  args=[fname, mibsize, force_dd])
 
     return fname
 
 
-def handle_swapcfg(swapcfg):
+def handle_swapcfg(swapcfg, force_dd=False):
     """handle the swap config, calling setup_swap if necessary.
        return None or (filename, size)
     """
@@ -349,7 +349,12 @@ def handle_swapcfg(swapcfg):
             size = util.human2bytes(size)
         if isinstance(maxsize, str):
             maxsize = util.human2bytes(maxsize)
-        return setup_swapfile(fname=fname, size=size, maxsize=maxsize)
+        return setup_swapfile(
+            fname=fname,
+            size=size,
+            maxsize=maxsize,
+            force_dd=force_dd
+        )
 
     except Exception as e:
         LOG.warning("failed to setup swap: %s", e)
@@ -479,7 +484,8 @@ def handle(_name, cfg, cloud, log, _args):
         else:
             actlist.append(x)
 
-    swapret = handle_swapcfg(cfg.get('swap', {}))
+    force_dd = False
+    swapret = handle_swapcfg(cfg.get('swap', {}), force_dd)
     if swapret:
         actlist.append([swapret, "none", "swap", "sw", "0", "0"])
 
@@ -545,7 +551,21 @@ def handle(_name, cfg, cloud, log, _args):
             subp.subp(cmd)
             log.debug(fmt, "PASS")
         except subp.ProcessExecutionError:
-            log.warning(fmt, "FAIL")
-            util.logexc(log, fmt, "FAIL")
+            if cmd[0] == "swapon" and not force_dd:
+                log.debug("Failed swapon, trying with dd")
+                force_dd = True
+                swapret = handle_swapcfg(cfg.get('swap', {}), force_dd)
+                if swapret:
+                    try:
+                        subp.subp(cmd)
+                        log.debug(fmt, "PASS")
+                    except subp.ProcessExecutionError:
+                        log.warning(fmt, "FAIL")
+                        util.logexc(log, fmt, "FAIL")
+                else:
+                    log.error("Unexpected no swap file")
+            else:
+                log.warning(fmt, "FAIL")
+                util.logexc(log, fmt, "FAIL")
 
 # vi: ts=4 expandtab
